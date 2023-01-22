@@ -1,0 +1,92 @@
+﻿Chodzenie przez ściany:
+Zainstalowałam plugin snowman (decompiler) do x64dbg, aby trochę łatwiej patrzyło mi się na kod (to było jeszcze zanim pomyślałam trochę mądrzej i wrzuciłam zadanie w IDA Freeware 8.2). Oglądałam sobie różne nazwy funkcji szukając rozwiązania, aż znalazłam “player_step” i stamtąd “object_can_move”. Po zdekompilowaniu, kod tej funkcji wyglądał mniej więcej o tak:
+
+
+If (costam)
+        cos=0
+else
+        cos=1
+
+
+Chciałam pozbyć się tego ustawiania na 0 (bo to oznaczało, że gracz nie może się tam ruszyć) i zawsze ustawiać na 1. W związku z czym najechałam na tę linijkę kodu pod ifem gdzie jest “... = 0” i kliknęłam prawym przyciskiem myszy, aby otworzyć tę linijkę z powrotem w x64dbg. To było “xor al, al”, więc zamieniłam to po prostu na “mov al, 1”.
+
+
+
+
+Znalezienie flagi:
+Postanowiłam przeszukać stringi programu, aby zobaczyć czy nie ma tam ukrytej flagi. Odpaliłam program w HxD i za pomocą ctrl+F wyszukałam słowa “flag”. Flaga od razu się znalazła.
+Flaga to: FLAG{gr3pp!ng-thr0ugh-str1ngs?-isn't-th4t-t0o-ez?}
+
+
+
+
+Wyświetlanie flagi w grze:
+Wrzuciłam program do IDA Freeware 8.2 i za pomocą shift+F12 wyświetliłam tam wszystkie stringi. Wyszukałam znowu flagę przez ctrl+F i kliknęłam na nią dwukrotnie, żeby znaleźć odwołanie w kodzie. Znalazłam je w funkcji player_mailbox. Popatrzyłam sobie na tę funkcję i wyglądała mniej więcej tak:
+
+
+v1 = check(...)
+v3=v2
+if(!v1)
+        v3= “Nothing here…”
+return show_text(v3)
+
+
+Wywnioskowałam, że chcemy sprawić, żeby v1 było true, aby nie wchodzić do ifa, w którym zmieniamy wartość v3. To oznacza, że funkcja check(...) musi nam zwrócić true. Sprawdziłam to jeszcze na szybko podmieniając w funkcji “test al, al” na jakiś warunek, który nie zachodzi (np. cmp al, E) i rzeczywiście wtedy wyświetlała mi się flaga w grze na skrzynce pocztowej gracza (to, że ma się wyświetlać na skrzynce pocztowej wywnioskowałam z nazwy funkcji). Ale ponieważ mieliśmy nie modyfikować gry, to spojrzałam sobie na odwołania tej funkcji check i znalazłam jedno w funkcji “mark”. Spojrzałam więc na odwołania funkcji mark i znalazłam w “overworld_keypress”. Zaś w tej funkcji był taki warunek:
+v3=x;
+if(asc_cos[x] == al ^ 0x6A) {
+        ++x;
+        if(v3 == 13) {
+                x=0;
+                return mark(...);
+        }
+}
+
+
+Więc stwierdziłam, że chcę doprowadzić do v3==13, czyli żeby 13 razy nadrzędny warunek został spełniony. Ten warunek o który nam chodzi można rozumieć jako “value = arg^0x6A”, gdzie arg to wciśnięty klawisz. Dlatego następnie spojrzałam na definicję asc_cos i znalazłam coś takiego:
+
+
+asc_14000A100                   db 9,0Bh                ; DATA XREF: overworld_keypress+34↑o
+.rdata:000000014000A102                 db    4
+.rdata:000000014000A103                 db    3
+.rdata:000000014000A104                 db    2
+.rdata:000000014000A105                 db  0Bh
+.rdata:000000014000A106                 db  10h
+.rdata:000000014000A107                 db  0Ch
+.rdata:000000014000A108                 db    6
+.rdata:000000014000A109                 db  0Bh
+.rdata:000000014000A10A                 db  0Dh
+.rdata:000000014000A10B                 db  1Ah
+.rdata:000000014000A10C                 db    6
+.rdata:000000014000A10D                 db  12h
+.rdata:000000014000A10E                 db    0
+.rdata:000000014000A10F                 db    0
+
+
+
+
+Więc zaczęłam po kolei xorować kolejne rzeczy, tzn otworzyłam stronę XOR Calculator  i po kolei wykonywałam 0x09^06A, 0x0B^0x06A, …
+Otrzymałam po kolei literki: c a n i h a z f l a g p l x
+Następnie odpaliłam grę i po dotarciu do skrzynki mailowej wcisnęłam każdą z literek po kolei i po naciśnięciu spacji wyświetliła mi się flaga w dymku tekstu przy skrzynce pocztowej.
+
+
+
+
+Chodzenie przez ściany przy wciśnięciu shift
+Ponieważ przy pracowaniu nad zwykłym chodzeniem przez ściany odkryłam, że w funkcji “object_can_move” wykonuje się “mov al, 1” gdy chcemy przejść przez ścianę i “xor al, al” gdy nie możemy, to postanowiłam wykorzystać ten fakt. Idea była taka, żeby sprawdzać czy kliknięty jest shift i jeśli tak to wchodzić do tej części kodu z “mov al, 1” a jeśli nie - do tej z xorem. Trzeba było jednak jeszcze wymyślić jak sprawdzić czy kliknięty jest shift. Przeszukałam kod i znalazłam funkcję “handle_movement_input”. Postanowiłam wykorzystać tę samą metodę sprawdzania wciśniętego klawisza, jak w tej funkcji (tzn. cmp i jump warunkowo). To co musiałam porównać to odpowiednia część rax, tzn. [rax+0xE1] (bo to jest kod lewego shifta). Przeniosłam sobie więc te część do dil (sprawdziłam wcześniej, że rejestr rdi jest wolny) i zrobiłam to od razu w funkcji player_step (na samym początku tej funkcji, bo później rax był modyfikowany a dil nie). Żeby dodać taką linijkę kodu, to zastąpiłam w wolnym miejscu “int3” przez “push rbx” (pierwszą linijkę tej funkcji) i zamiast tego pusha na początku zrobiłam jumpa do tej linijki. Pod spodem zrobiłam kolejnego jumpa do innego int3, który zastąpiłam “mov dil, byte ptr ds:[rax+0xE1]” i następnie wróciłam przez jmp do drugiej linijki funkcji (czyli “sub rsp, 20”). 
+
+
+Następnie wróciłam do funkcji “object_can_move” i zaimplementowałam, to co opisałam powyżej, czyli nad “xor al, al” dodałam jmp, który wykonywał mi tę zastąpioną linijkę kodu a następnie sprawdzał “cmp dil, 1” i warunkowy skok do linijki kodu w funkcji, w której było mov al, 1 (tzn umożliwienie zrobienia kroku);  a pod spodem zwykły jmp do linijki w której było xor al, al (czyli tam, gdzie ustawialiśmy, że nie można przejść). 
+
+
+Ten plan okazał się jednak nie taki dobry, ponieważ na początku funkcji było “push rsi” i mój stan shifta utykał na stosie na początku “object_can_move”. Żeby to naprawić po prostu cofnęłam poprzednie zmiany w tej funkcji i zastąpiłam pierwszą linijkę (czyli “mov qword ptr ss:[rsp+0x8], rbx”) jumpem do int3 zastapionych tą linijką i nastepnie jumpem do in3 zastapionych kodem:
+“cmp dil, 1
+ je funkcjaShift
+ jmp drugaLinijkaFunkcjiObject_can_move (czyli push rbp)”
+
+
+Gdzie funkcjaShift, wyglądała następująco (znowu zastąpione jakieś wolne int3):
+“ mov al, 1
+  ret “ 
+
+
+Innymi słowy na samym początku funkcji sprawdzam czy shift jest kliknięty poprzez porównanie byte ptr ds:[rax+0xE1], które zapisałam wczesniej w dil do 1 i robię warunkowy skok do którkiej funkcji, która pozwala na ruch jeśli wciśnięty jest klawisz lewego shifta (funkcjaShift), a jeśli nie jest wciśnięty shift to normalnie dalej wykonuję resztę funkcji “object_can_move”.
